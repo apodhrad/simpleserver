@@ -3,8 +3,11 @@ package server
 import (
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
+	cp "github.com/otiai10/copy"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -89,4 +92,46 @@ func TestSimpleServer_02_multi(t *testing.T) {
 	assertRequest(t, addr2, "/hello.txt", "Hello from 02_sub")
 	server2.Stop()
 	assertRequestError(t, addr2, "")
+}
+
+func TestSimpleServer_nonexisting(t *testing.T) {
+	server := SimpleServer{Port: 8880, Dir: "test-resources/nonexisting"}
+	addr, err := server.Start()
+
+	assert.NotNil(t, err)
+	assert.Empty(t, addr)
+	assert.Nil(t, server.server)
+	assert.Nil(t, server.ctx)
+	assert.Nil(t, server.cancelCtx)
+	assertRequestError(t, "http://localhost:8880", "")
+}
+
+func TestSimpleServer_nondir(t *testing.T) {
+	server := SimpleServer{Port: 8880, Dir: "test-resources/03_nondir"}
+	addr, err := server.Start()
+
+	assert.NotNil(t, err)
+	assert.Empty(t, addr)
+	assert.Nil(t, server.server)
+	assert.Nil(t, server.ctx)
+	assert.Nil(t, server.cancelCtx)
+	assertRequestError(t, "http://localhost:8880", "")
+}
+
+func TestSimpleServer_notfound(t *testing.T) {
+	tempDir := t.TempDir()
+	cp.Copy("test-resources/01_helloworld", tempDir)
+	server := SimpleServer{Dir: tempDir}
+	addr, err := server.Start()
+
+	assert.Nil(t, err)
+	assertStatus(t, addr, "/hello.txt", STATUS_200_OK)
+	assertRequest(t, addr, "/hello.txt", "Hello SimpleServer!")
+
+	os.Remove(filepath.Join(tempDir, "hello.txt"))
+	assertStatus(t, addr, "/hello.txt", STATUS_404_NOT_FOUND)
+	assertRequest(t, addr, "/hello.txt", "")
+
+	server.Stop()
+	assertRequestError(t, addr, "")
 }

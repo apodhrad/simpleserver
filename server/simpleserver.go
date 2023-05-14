@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -20,6 +19,9 @@ const CONTENT_TYPE_TEXT string = "text/plain"
 const CONTENT_TYPE_JSON string = "application/json"
 const CONTENT_TYPE_FILE string = "application/octet-stream"
 
+// Very simple http server which makes your file directory available via http.
+//
+// Default port is 8883.
 type SimpleServer struct {
 	Port      int
 	Dir       string
@@ -28,17 +30,24 @@ type SimpleServer struct {
 	cancelCtx context.CancelFunc
 }
 
+// Starts the http server and return its address.
 func (s *SimpleServer) Start() (string, error) {
 	mux := http.NewServeMux()
 
-	err := filepath.Walk(s.Dir, func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
+	fileInfo, err := os.Stat(s.Dir)
+	if err != nil {
+		return "", err
+	}
+
+	if !fileInfo.IsDir() {
+		return "", fmt.Errorf("server dir '%s' is not a dir", s.Dir)
+	}
+
+	err = filepath.Walk(s.Dir, func(path string, info fs.FileInfo, err error) error {
 		if !info.IsDir() {
 			mux.HandleFunc(simpleHandler(s.Dir, path))
 		}
-		return nil
+		return err
 	})
 	if err != nil {
 		return "", err
@@ -49,18 +58,11 @@ func (s *SimpleServer) Start() (string, error) {
 		Addr:    getAddr(s.Port),
 		Handler: mux,
 		BaseContext: func(l net.Listener) context.Context {
-			// ctx = context.WithValue(ctx, CTX_NAME_KEY, ctxName)
 			return s.ctx
 		},
 	}
 	go func() {
-		fmt.Printf("Start server\n")
-		err := s.server.ListenAndServe()
-		if errors.Is(err, http.ErrServerClosed) {
-			fmt.Printf("Server closed\n")
-		} else if err != nil {
-			fmt.Printf("error listening for server one: %s\n", err)
-		}
+		s.server.ListenAndServe()
 		s.cancelCtx()
 	}()
 
@@ -69,6 +71,7 @@ func (s *SimpleServer) Start() (string, error) {
 	return s.server.Addr, err
 }
 
+// Stops the http server
 func (simpleServer *SimpleServer) Stop() error {
 	err := simpleServer.server.Shutdown(simpleServer.ctx)
 	if err != nil {
@@ -89,11 +92,12 @@ func simpleHandler(dir string, path string) (string, func(w http.ResponseWriter,
 	simpleHandler := func(w http.ResponseWriter, r *http.Request) {
 		fileBytes, err := os.ReadFile(path)
 		if err != nil {
-			panic(err)
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.Header().Set("Content-Type", CONTENT_TYPE_TEXT)
+			w.WriteHeader(http.StatusOK)
+			w.Write(fileBytes)
 		}
-		w.Header().Set("Content-Type", CONTENT_TYPE_TEXT)
-		w.WriteHeader(http.StatusOK)
-		w.Write(fileBytes)
 	}
 	pattern := path[len(dir):]
 	return pattern, simpleHandler
